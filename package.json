@@ -1,0 +1,15 @@
+{
+      "name": "farzdq-bot",
+        "version": "1.0.0",
+          "description": "بوت تليجرام لمكتبة الفرزدق",
+            "main": "server.js",
+              "type": "module",
+                "scripts": {
+                    "start": "node server.js"
+                      },
+                        "dependencies": {
+                            "express": "^4.18.0",
+                                "axios": "^1.6.0"
+                                  }
+                                  }
+}
