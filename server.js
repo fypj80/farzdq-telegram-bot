@@ -1,7 +1,9 @@
 import express from 'express';
 import axios from 'axios';
+import cors from 'cors';
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 const TOKEN = process.env.TOKEN;
@@ -286,6 +288,34 @@ app.post('/webhook', async (req, res) => {
         console.error('❌ خطأ:', error);
     }
     res.send('OK');
+});
+
+// 🔥 🔥 🔥 الـ API endpoints للواجهة 🔥 🔥 🔥
+
+// 1. جلب جميع المنتجات
+app.get('/api/products', (req, res) => {
+    res.json({
+        success: true,
+        products: products
+    });
+});
+
+// 2. التحقق من الاتصال
+app.get('/api/health', (req, res) => {
+    res.json({ 
+        success: true, 
+        message: 'البوت شغال!',
+        productsCount: products.length
+    });
+});
+
+// 3. الإحصائيات
+app.get('/api/stats', (req, res) => {
+    res.json({
+        success: true,
+        totalProducts: products.length,
+        totalAdmins: admins.length
+    });
 });
 
 app.get('/', (req, res) => {
