@@ -43,6 +43,7 @@ function productsKeyboard() {
     return {
         keyboard: [
             [{ text: '➕ إضافة منتج' }, { text: '🗑️ حذف منتج' }],
+            [{ text: '🛍️ عرض المنتجات' }, { text: '📊 الإحصائيات' }],
             [{ text: '🏠 الرئيسية' }]
         ],
         resize_keyboard: true
@@ -85,7 +86,7 @@ app.post('/webhook', async (req, res) => {
 
         else if (text === '🛍️ عرض المنتجات' || text === '/listproducts') {
             if (products.length === 0) {
-                await sendMessage(chatId, '📦 لا توجد منتجات', mainKeyboard());
+                await sendMessage(chatId, '📦 لا توجد منتجات', productsKeyboard());
             } else {
                 let message = '🛍️ <b>المنتجات:</b>\n\n';
                 products.forEach((product, index) => {
