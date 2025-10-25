@@ -67,8 +67,8 @@ function productsKeyboard() {
 function adminsKeyboard() {
     return {
         keyboard: [
-            [{ text: '➕ إضافة مشرف' }, { text: '👥 عرض المشرفين' }],
-            [{ text: '🏠 الرئيسية' }]
+            [{ text: '➕ إضافة مشرف' }, { text: '🗑️ حذف مشرف' }],
+            [{ text: '👥 عرض المشرفين' }, { text: '🏠 الرئيسية' }]
         ],
         resize_keyboard: true
     };
@@ -147,7 +147,8 @@ app.post('/webhook', async (req, res) => {
                 '• 📊 الإحصائيات\n\n' +
                 '👥 <b>إدارة المشرفين:</b>\n' +
                 '• 👥 عرض المشرفين\n' +
-                '• ➕ إضافة مشرف',
+                '• ➕ إضافة مشرف\n' +
+                '• 🗑️ حذف مشرف',
                 mainKeyboard()
             );
         }
@@ -251,6 +252,70 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
+        // 🗑️ حذف مشرف - 🔥 الجديدة
+        else if (text === '🗑️ حذف مشرف' || text.startsWith('/removeadmin')) {
+            if (text === '🗑️ حذف مشرف') {
+                if (admins.length <= 1) {
+                    await sendMessage(chatId, '❌ لا يمكن حذف جميع المشرفين', adminsKeyboard());
+                    return res.send('OK');
+                }
+                
+                let message = '🗑️ <b>اختر مشرف للحذف:</b>\n\n';
+                admins.forEach((adminId, index) => {
+                    if (adminId !== userId) { // لا يمكن حذف نفسه
+                        message += `${index + 1}. <code>/removeadmin ${adminId}</code>\n`;
+                    }
+                });
+                
+                await sendMessage(chatId, message, adminsKeyboard());
+            } else {
+                const adminIdToRemove = text.replace('/removeadmin', '').trim();
+                
+                if (!adminIdToRemove) {
+                    await sendMessage(chatId, 
+                        '⚠️ استخدم: <code>/removeadmin رقم_المشرف</code>',
+                        adminsKeyboard()
+                    );
+                    return res.send('OK');
+                }
+
+                // منع حذف نفسه
+                if (adminIdToRemove === userId) {
+                    await sendMessage(chatId, 
+                        '❌ لا يمكنك حذف نفسك',
+                        adminsKeyboard()
+                    );
+                    return res.send('OK');
+                }
+
+                // منع حذف آخر مشرف
+                if (admins.length <= 1) {
+                    await sendMessage(chatId, 
+                        '❌ لا يمكن حذف آخر مشرف في النظام',
+                        adminsKeyboard()
+                    );
+                    return res.send('OK');
+                }
+
+                const index = admins.indexOf(adminIdToRemove);
+                if (index === -1) {
+                    await sendMessage(chatId, 
+                        `❌ المشرف ${adminIdToRemove} غير موجود`,
+                        adminsKeyboard()
+                    );
+                    return res.send('OK');
+                }
+
+                admins.splice(index, 1);
+                await sendMessage(chatId, 
+                    `✅ <b>تم حذف المشرف:</b>\n\n` +
+                    `👤 الرقم: ${adminIdToRemove}\n` +
+                    `📊 عدد المشرفين المتبقين: ${admins.length}`,
+                    adminsKeyboard()
+                );
+            }
+        }
+
         // 🗑️ حذف منتج
         else if (text === '🗑️ حذف منتج' || text.startsWith('/deleteproduct')) {
             if (text === '🗑️ حذف منتج') {
@@ -321,7 +386,7 @@ app.get('/api/health', (req, res) => {
         success: true, 
         message: 'البوت شغال!',
         productsCount: products.length,
-        timestamp: new Date().toISOString()
+        adminsCount: admins.length
     });
 });
 
@@ -341,7 +406,7 @@ app.get('/', (req, res) => {
         message: '🚀 سيرفر مكتبة الفرزدق شغال!',
         endpoints: {
             health: '/api/health',
-            products: '/api/products',
+            products: '/api/products', 
             stats: '/api/stats'
         }
     });
@@ -369,4 +434,5 @@ app.listen(PORT, () => {
     console.log(`✅ السيرفر شغال على البورت ${PORT}`);
     console.log(`🌐 رابط الصحة: http://localhost:${PORT}/api/health`);
     console.log(`🛍️ رابط المنتجات: http://localhost:${PORT}/api/products`);
+    console.log(`👥 عدد المشرفين: ${admins.length}`);
 });
