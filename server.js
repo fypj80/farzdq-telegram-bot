@@ -1,13 +1,24 @@
 import express from 'express';
 import axios from 'axios';
-import cors from 'cors';
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
-const TOKEN = process.env.TOKEN;
-const ADMIN_ID = process.env.ADMIN_ID;
+// 🔥 CORS يدوي بدون حاجة لتثبيت حزم إضافية
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    next();
+});
+
+// معالجة طلبات OPTIONS لـ CORS
+app.options('*', (req, res) => {
+    res.sendStatus(200);
+});
+
+const TOKEN = process.env.TOKEN || '8034752014:AAHvCAZ-_NKynT_NMtATy2XrKuZagpMKnv0';
+const ADMIN_ID = process.env.ADMIN_ID || '5044802006';
 
 let products = [];
 let admins = [ADMIN_ID];
@@ -178,20 +189,23 @@ app.post('/webhook', async (req, res) => {
                     return res.send('OK');
                 }
 
-                products.push({
+                const newProduct = {
                     id: Date.now(),
                     name,
-                    price,
+                    price: parseInt(price),
                     category,
                     description,
-                    image: image || ''
-                });
+                    image: image || 'https://via.placeholder.com/300x200/3498db/ffffff?text=منتج+جديد'
+                };
+
+                products.push(newProduct);
 
                 await sendMessage(chatId, 
                     `✅ <b>تم إضافة المنتج:</b>\n\n` +
                     `📦 ${name}\n` +
                     `💰 ${price} دينار\n` +
-                    `📁 ${category}`,
+                    `📁 ${category}\n` +
+                    `📝 ${description}`,
                     productsKeyboard()
                 );
             }
@@ -271,10 +285,11 @@ app.post('/webhook', async (req, res) => {
                     return res.send('OK');
                 }
 
-                products.splice(index, 1);
+                const deletedProduct = products.splice(index, 1)[0];
                 await sendMessage(chatId, 
                     `✅ <b>تم حذف المنتج:</b>\n\n` +
-                    `📦 ${productName}`,
+                    `📦 ${productName}\n` +
+                    `💰 ${deletedProduct.price} دينار`,
                     productsKeyboard()
                 );
             }
@@ -305,7 +320,8 @@ app.get('/api/health', (req, res) => {
     res.json({ 
         success: true, 
         message: 'البوت شغال!',
-        productsCount: products.length
+        productsCount: products.length,
+        timestamp: new Date().toISOString()
     });
 });
 
@@ -318,11 +334,39 @@ app.get('/api/stats', (req, res) => {
     });
 });
 
+// 4. الصفحة الرئيسية
 app.get('/', (req, res) => {
-    res.send('🚀 سيرفر مكتبة الفرزدق شغال!');
+    res.json({
+        success: true,
+        message: '🚀 سيرفر مكتبة الفرزدق شغال!',
+        endpoints: {
+            health: '/api/health',
+            products: '/api/products',
+            stats: '/api/stats'
+        }
+    });
+});
+
+// معالجة الأخطاء
+app.use((err, req, res, next) => {
+    console.error('❌ خطأ في السيرفر:', err);
+    res.status(500).json({
+        success: false,
+        message: 'خطأ داخلي في السيرفر'
+    });
+});
+
+// 404 - صفحة غير موجودة
+app.use('*', (req, res) => {
+    res.status(404).json({
+        success: false,
+        message: 'الصفحة غير موجودة'
+    });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`✅ السيرفر شغال على البورت ${PORT}`);
+    console.log(`🌐 رابط الصحة: http://localhost:${PORT}/api/health`);
+    console.log(`🛍️ رابط المنتجات: http://localhost:${PORT}/api/products`);
 });
