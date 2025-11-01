@@ -22,6 +22,7 @@ const ADMIN_ID = process.env.ADMIN_ID || '5044802006';
 
 let products = [];
 let admins = [ADMIN_ID];
+let userStates = {};
 
 async function sendMessage(chatId, text, replyMarkup = null) {
     try {
@@ -74,6 +75,47 @@ function adminsKeyboard() {
     };
 }
 
+// لوحة الإلغاء
+function cancelKeyboard() {
+    return {
+        keyboard: [[{ text: '❌ إلغاء' }]],
+        resize_keyboard: true
+    };
+}
+
+// حالة المستخدم لإدارة تدفق إضافة المنتج
+function setUserState(chatId, state, data = {}) {
+    userStates[chatId] = { state, data };
+}
+
+function getUserState(chatId) {
+    return userStates[chatId];
+}
+
+function clearUserState(chatId) {
+    delete userStates[chatId];
+}
+
+// عرض المنتجات مع أرقام تسلسلية
+function displayProducts() {
+    if (products.length === 0) {
+        return '❌ لا توجد منتجات حالياً.';
+    }
+    
+    let productsList = '🛍️ <b>قائمة المنتجات:</b>\n\n';
+    products.forEach((product, index) => {
+        productsList += `📦 <b>المنتج ${index + 1}:</b>\n`;
+        productsList += `   🏷️ <b>الاسم:</b> ${product.name}\n`;
+        productsList += `   📝 <b>الوصف:</b> ${product.description}\n`;
+        productsList += `   💰 <b>السعر:</b> ${product.price}\n`;
+        if (product.image) {
+            productsList += `   🖼️ <b>الصورة:</b> متوفرة\n`;
+        }
+        productsList += '\n' + '─'.repeat(30) + '\n\n';
+    });
+    return productsList;
+}
+
 app.post('/webhook', async (req, res) => {
     try {
         const { message } = req.body;
@@ -83,356 +125,215 @@ app.post('/webhook', async (req, res) => {
         const text = message.text;
         const userId = message.from.id.toString();
 
+        // التحقق من صلاحية المشرف
         if (!isAdmin(userId)) {
-            await sendMessage(chatId, '❌ ليس لديك صلاحية للتحكم');
+            await sendMessage(chatId, '❌ ليس لديك صلاحية للوصول إلى هذا البوت.');
             return res.send('OK');
         }
 
-        // الأوامر النصية والأزرار
-        if (text === '/start' || text === '🏠 الرئيسية') {
-            await sendMessage(chatId, 
-                '🎯 <b>مرحباً في لوحة تحكم مكتبة الفرزدق</b>\n\n' +
-                'اختر من الأزرار أدناه:', 
-                mainKeyboard()
-            );
+        // التعامل مع حالة الإلغاء
+        if (text === '❌ إلغاء') {
+            clearUserState(chatId);
+            await sendMessage(chatId, '✅ تم الإلغاء.', mainKeyboard());
+            return res.send('OK');
         }
 
-        else if (text === '🛍️ عرض المنتجات' || text === '/listproducts') {
-            if (products.length === 0) {
-                await sendMessage(chatId, '📦 لا توجد منتجات', productsKeyboard());
-            } else {
-                let message = '🛍️ <b>المنتجات:</b>\n\n';
-                products.forEach((product, index) => {
-                    message += `${index + 1}. ${product.name} - ${product.price} دينار\n`;
+        // التعامل مع حالات إضافة المنتج
+        const userState = getUserState(chatId);
+        if (userState && userState.state === 'awaiting_product_name') {
+            setUserState(chatId, 'awaiting_product_image', { 
+                ...userState.data, 
+                name: text 
+            });
+            await sendMessage(chatId, '📝 تم حفظ الاسم.\n\n🖼️ الآن أرسل صورة المنتج (اختياري) أو اضغط /skip لتخطي هذه الخطوة:', cancelKeyboard());
+            return res.send('OK');
+        }
+
+        if (userState && userState.state === 'awaiting_product_image') {
+            if (text === '/skip') {
+                setUserState(chatId, 'awaiting_product_description', {
+                    ...userState.data,
+                    image: null
                 });
-                await sendMessage(chatId, message, productsKeyboard());
-            }
-        }
-
-        else if (text === '📊 الإحصائيات' || text === '/stats') {
-            const totalProducts = products.length;
-            const totalAdmins = admins.length;
-            await sendMessage(chatId, 
-                `📊 <b>الإحصائيات:</b>\n\n` +
-                `🛍️ عدد المنتجات: ${totalProducts}\n` +
-                `👥 عدد المشرفين: ${totalAdmins}`,
-                mainKeyboard()
-            );
-        }
-
-        else if (text === '👥 إدارة المشرفين') {
-            await sendMessage(chatId, '👥 <b>إدارة المشرفين:</b>', adminsKeyboard());
-        }
-
-        else if (text === '👥 عرض المشرفين' || text === '/listadmins') {
-            if (admins.length === 0) {
-                await sendMessage(chatId, '👥 لا يوجد مشرفين', adminsKeyboard());
-            } else {
-                let message = '👥 <b>قائمة المشرفين:</b>\n\n';
-                admins.forEach((adminId, index) => {
-                    const isYou = adminId === userId ? ' (أنت)' : '';
-                    message += `${index + 1}. ${adminId}${isYou}\n`;
+                await sendMessage(chatId, '✅ تم تخطي إضافة الصورة.\n\n📝 الآن أرسل وصف المنتج:', cancelKeyboard());
+            } else if (message.photo) {
+                const photo = message.photo[message.photo.length - 1];
+                setUserState(chatId, 'awaiting_product_description', {
+                    ...userState.data,
+                    image: photo.file_id
                 });
-                await sendMessage(chatId, message, adminsKeyboard());
-            }
-        }
-
-        else if (text === '❓ المساعدة' || text === '/help') {
-            await sendMessage(chatId, 
-                '🧾 <b>الأوامر المتاحة:</b>\n\n' +
-                '🛍️ <b>إدارة المنتجات:</b>\n' +
-                '• 🛍️ عرض المنتجات\n' +
-                '• ➕ إضافة منتج\n' + 
-                '• 🗑️ حذف منتج\n' +
-                '• 📊 الإحصائيات\n\n' +
-                '👥 <b>إدارة المشرفين:</b>\n' +
-                '• 👥 عرض المشرفين\n' +
-                '• ➕ إضافة مشرف\n' +
-                '• 🗑️ حذف مشرف',
-                mainKeyboard()
-            );
-        }
-
-        // ➕ إضافة منتج
-        else if (text === '➕ إضافة منتج' || text.startsWith('/addproduct')) {
-            if (text === '➕ إضافة منتج') {
-                await sendMessage(chatId, 
-                    '📝 <b>إضافة منتج جديد:</b>\n\n' +
-                    'استخدم الأمر:\n' +
-                    '<code>/addproduct اسم~سعر~تصنيف~وصف~[صورة]</code>\n\n' +
-                    'مثال:\n' +
-                    '<code>/addproduct دفتر~2500~stationery~دفتر ملاحظات~https://example.com/image.jpg</code>',
-                    productsKeyboard()
-                );
+                await sendMessage(chatId, '✅ تم حفظ الصورة.\n\n📝 الآن أرسل وصف المنتج:', cancelKeyboard());
             } else {
-                const data = text.replace('/addproduct', '').trim();
-                
-                if (!data.includes('~')) {
-                    await sendMessage(chatId, 
-                        '⚠️ استخدم التنسيق:\n<code>/addproduct اسم~سعر~تصنيف~وصف~[صورة]</code>',
-                        productsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                const parts = data.split('~');
-                const name = parts[0];
-                const price = parts[1];
-                const category = parts[2];
-                const description = parts[3];
-                const image = parts[4];
-
-                if (!['stationery', 'pens', 'papers'].includes(category)) {
-                    await sendMessage(chatId, 
-                        '⚠️ التصنيف غير صالح. المسموح: stationery, pens, papers',
-                        productsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                const newProduct = {
-                    id: Date.now(),
-                    name,
-                    price: parseInt(price),
-                    category,
-                    description,
-                    image: image || 'https://via.placeholder.com/300x200/3498db/ffffff?text=منتج+جديد'
-                };
-
-                products.push(newProduct);
-
-                await sendMessage(chatId, 
-                    `✅ <b>تم إضافة المنتج:</b>\n\n` +
-                    `📦 ${name}\n` +
-                    `💰 ${price} دينار\n` +
-                    `📁 ${category}\n` +
-                    `📝 ${description}`,
-                    productsKeyboard()
-                );
+                await sendMessage(chatId, '❌ يرجى إرسال صورة صالحة أو استخدام /skip لتخطي هذه الخطوة.', cancelKeyboard());
             }
+            return res.send('OK');
         }
 
-        // ➕ إضافة مشرف
-        else if (text === '➕ إضافة مشرف' || text.startsWith('/addadmin')) {
-            if (text === '➕ إضافة مشرف') {
-                await sendMessage(chatId, 
-                    '👤 <b>إضافة مشرف جديد:</b>\n\n' +
-                    'استخدم الأمر:\n' +
-                    '<code>/addadmin رقم_المشرف</code>\n\n' +
-                    'مثال:\n' +
-                    '<code>/addadmin 123456789</code>',
-                    adminsKeyboard()
-                );
-            } else {
-                const newAdminId = text.replace('/addadmin', '').trim();
-                
-                if (!newAdminId) {
-                    await sendMessage(chatId, 
-                        '⚠️ استخدم: <code>/addadmin رقم_المشرف</code>',
-                        adminsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                if (admins.includes(newAdminId)) {
-                    await sendMessage(chatId, 
-                        `❌ الرقم ${newAdminId} مشرف مسبقاً`,
-                        adminsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                admins.push(newAdminId);
-                await sendMessage(chatId, 
-                    `✅ <b>تم إضافة المشرف:</b>\n\n` +
-                    `👤 الرقم: ${newAdminId}\n` +
-                    `📊 عدد المشرفين: ${admins.length}`,
-                    adminsKeyboard()
-                );
-            }
+        if (userState && userState.state === 'awaiting_product_description') {
+            setUserState(chatId, 'awaiting_product_price', {
+                ...userState.data,
+                description: text
+            });
+            await sendMessage(chatId, '✅ تم حفظ الوصف.\n\n💰 الآن أرسل سعر المنتج:', cancelKeyboard());
+            return res.send('OK');
         }
 
-        // 🗑️ حذف مشرف - 🔥 الجديدة
-        else if (text === '🗑️ حذف مشرف' || text.startsWith('/removeadmin')) {
-            if (text === '🗑️ حذف مشرف') {
-                if (admins.length <= 1) {
-                    await sendMessage(chatId, '❌ لا يمكن حذف جميع المشرفين', adminsKeyboard());
-                    return res.send('OK');
-                }
-                
-                let message = '🗑️ <b>اختر مشرف للحذف:</b>\n\n';
-                admins.forEach((adminId, index) => {
-                    if (adminId !== userId) { // لا يمكن حذف نفسه
-                        message += `${index + 1}. <code>/removeadmin ${adminId}</code>\n`;
-                    }
-                });
-                
-                await sendMessage(chatId, message, adminsKeyboard());
-            } else {
-                const adminIdToRemove = text.replace('/removeadmin', '').trim();
-                
-                if (!adminIdToRemove) {
-                    await sendMessage(chatId, 
-                        '⚠️ استخدم: <code>/removeadmin رقم_المشرف</code>',
-                        adminsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                // منع حذف نفسه
-                if (adminIdToRemove === userId) {
-                    await sendMessage(chatId, 
-                        '❌ لا يمكنك حذف نفسك',
-                        adminsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                // منع حذف آخر مشرف
-                if (admins.length <= 1) {
-                    await sendMessage(chatId, 
-                        '❌ لا يمكن حذف آخر مشرف في النظام',
-                        adminsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                const index = admins.indexOf(adminIdToRemove);
-                if (index === -1) {
-                    await sendMessage(chatId, 
-                        `❌ المشرف ${adminIdToRemove} غير موجود`,
-                        adminsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                admins.splice(index, 1);
-                await sendMessage(chatId, 
-                    `✅ <b>تم حذف المشرف:</b>\n\n` +
-                    `👤 الرقم: ${adminIdToRemove}\n` +
-                    `📊 عدد المشرفين المتبقين: ${admins.length}`,
-                    adminsKeyboard()
-                );
+        if (userState && userState.state === 'awaiting_product_price') {
+            const price = text.trim();
+            if (!price || isNaN(price)) {
+                await sendMessage(chatId, '❌ يرجى إدخال سعر صحيح.', cancelKeyboard());
+                return res.send('OK');
             }
+
+            // حفظ المنتج النهائي
+            const productData = userState.data;
+            const newProduct = {
+                id: Date.now(),
+                name: productData.name,
+                description: productData.description,
+                price: price,
+                image: productData.image || null,
+                createdAt: new Date().toISOString()
+            };
+
+            products.push(newProduct);
+            clearUserState(chatId);
+
+            let productInfo = `✅ <b>تم إضافة المنتج بنجاح!</b>\n\n`;
+            productInfo += `🏷️ <b>الاسم:</b> ${newProduct.name}\n`;
+            productInfo += `📝 <b>الوصف:</b> ${newProduct.description}\n`;
+            productInfo += `💰 <b>السعر:</b> ${newProduct.price}\n`;
+            productInfo += `🖼️ <b>الصورة:</b> ${newProduct.image ? 'متوفرة' : 'غير متوفرة'}`;
+
+            await sendMessage(chatId, productInfo, productsKeyboard());
+            return res.send('OK');
         }
 
-        // 🗑️ حذف منتج
-        else if (text === '🗑️ حذف منتج' || text.startsWith('/deleteproduct')) {
-            if (text === '🗑️ حذف منتج') {
+        // التعامل مع الأوامر الرئيسية
+        switch (text) {
+            case '/start':
+            case '🏠 الرئيسية':
+                await sendMessage(chatId, 'مرحباً بك في لوحة التحكم!', mainKeyboard());
+                break;
+
+            case '🛍️ عرض المنتجات':
+                await sendMessage(chatId, displayProducts(), productsKeyboard());
+                break;
+
+            case '➕ إضافة منتج':
+                setUserState(chatId, 'awaiting_product_name', {});
+                await sendMessage(chatId, '🚀 بدء إضافة منتج جديد...\n\n🏷️ أرسل اسم المنتج:', cancelKeyboard());
+                break;
+
+            case '🗑️ حذف منتج':
                 if (products.length === 0) {
-                    await sendMessage(chatId, '📦 لا توجد منتجات لحذفها', productsKeyboard());
-                    return res.send('OK');
-                }
-                
-                let message = '🗑️ <b>اختر منتج للحذف:</b>\n\n';
-                products.forEach((product, index) => {
-                    message += `${index + 1}. <code>/deleteproduct ${product.name}</code>\n`;
-                });
-                
-                await sendMessage(chatId, message, productsKeyboard());
-            } else {
-                const productName = text.replace('/deleteproduct', '').trim();
-                
-                if (!productName) {
+                    await sendMessage(chatId, '❌ لا توجد منتجات لحذفها.', productsKeyboard());
+                } else {
                     await sendMessage(chatId, 
-                        '⚠️ استخدم: <code>/deleteproduct اسم_المنتج</code>',
-                        productsKeyboard()
+                        `${displayProducts()}\n\n🗑️ <b>أرسل رقم المنتج الذي تريد حذفه:</b>\n(مثال: 1 لحذف المنتج الأول)`, 
+                        cancelKeyboard()
                     );
-                    return res.send('OK');
                 }
+                break;
 
-                const index = products.findIndex(p => p.name === productName);
-                if (index === -1) {
-                    await sendMessage(chatId, 
-                        `❌ المنتج "${productName}" غير موجود`,
-                        productsKeyboard()
-                    );
-                    return res.send('OK');
+            case '📊 الإحصائيات':
+                const stats = `📊 <b>الإحصائيات:</b>\n\n` +
+                             `🛍️ <b>عدد المنتجات:</b> ${products.length}\n` +
+                             `👥 <b>عدد المشرفين:</b> ${admins.length}\n` +
+                             `📅 <b>آخر تحديث:</b> ${new Date().toLocaleString()}`;
+                await sendMessage(chatId, stats, mainKeyboard());
+                break;
+
+            case '👥 إدارة المشرفين':
+                await sendMessage(chatId, '👥 لوحة إدارة المشرفين', adminsKeyboard());
+                break;
+
+            case '👥 عرض المشرفين':
+                const adminsList = admins.map((admin, index) => `${index + 1}. ${admin}`).join('\n');
+                await sendMessage(chatId, `👥 <b>قائمة المشرفين:</b>\n\n${adminsList}`, adminsKeyboard());
+                break;
+
+            case '➕ إضافة مشرف':
+                await sendMessage(chatId, 'أرسل معرف المشرف الجديد (User ID):', adminsKeyboard());
+                break;
+
+            case '🗑️ حذف مشرف':
+                if (admins.length <= 1) {
+                    await sendMessage(chatId, '❌ لا يمكن حذف جميع المشرفين.', adminsKeyboard());
+                } else {
+                    const adminsListForDelete = admins.map((admin, index) => `${index + 1}. ${admin}`).join('\n');
+                    await sendMessage(chatId, `👥 <b>قائمة المشرفين:</b>\n\n${adminsListForDelete}\n\nأرسل رقم المشرف الذي تريد حذفه:`, adminsKeyboard());
                 }
+                break;
 
-                const deletedProduct = products.splice(index, 1)[0];
+            case '❓ المساعدة':
                 await sendMessage(chatId, 
-                    `✅ <b>تم حذف المنتج:</b>\n\n` +
-                    `📦 ${productName}\n` +
-                    `💰 ${deletedProduct.price} دينار`,
-                    productsKeyboard()
+                    '📖 <b>دليل الاستخدام:</b>\n\n' +
+                    '🛍️ <b>عرض المنتجات:</b> عرض جميع المنتجات\n' +
+                    '➕ <b>إضافة منتج:</b> إضافة منتج جديد\n' +
+                    '🗑️ <b>حذف منتج:</b> حذف منتج موجود\n' +
+                    '👥 <b>إدارة المشرفين:</b> إضافة/حذف مشرفين\n' +
+                    '📊 <b>الإحصائيات:</b> عرض إحصائيات البوت',
+                    mainKeyboard()
                 );
-            }
+                break;
+
+            default:
+                // التعامل مع حذف المنتج برقم
+                if (!isNaN(text) && products.length > 0) {
+                    const productIndex = parseInt(text) - 1;
+                    if (productIndex >= 0 && productIndex < products.length) {
+                        const deletedProduct = products.splice(productIndex, 1)[0];
+                        await sendMessage(chatId, 
+                            `✅ <b>تم حذف المنتج بنجاح!</b>\n\n` +
+                            `🏷️ <b>الاسم:</b> ${deletedProduct.name}\n` +
+                            `💰 <b>السعر:</b> ${deletedProduct.price}`,
+                            productsKeyboard()
+                        );
+                    } else {
+                        await sendMessage(chatId, '❌ رقم المنتج غير صحيح.', productsKeyboard());
+                    }
+                    return res.send('OK');
+                }
+
+                // التعامل مع إضافة مشرف برقم
+                if (!isNaN(text) && text.length > 5) {
+                    if (!admins.includes(text)) {
+                        admins.push(text);
+                        await sendMessage(chatId, `✅ تم إضافة المشرف ${text} بنجاح`, adminsKeyboard());
+                    } else {
+                        await sendMessage(chatId, '❌ المشرف موجود مسبقاً', adminsKeyboard());
+                    }
+                    return res.send('OK');
+                }
+
+                // التعامل مع حذف مشرف برقم
+                if (!isNaN(text) && text.length <= 2) {
+                    const adminIndex = parseInt(text) - 1;
+                    if (adminIndex >= 0 && adminIndex < admins.length) {
+                        if (admins[adminIndex] === ADMIN_ID) {
+                            await sendMessage(chatId, '❌ لا يمكن حذف المشرف الرئيسي', adminsKeyboard());
+                        } else {
+                            const deletedAdmin = admins.splice(adminIndex, 1)[0];
+                            await sendMessage(chatId, `✅ تم حذف المشرف ${deletedAdmin} بنجاح`, adminsKeyboard());
+                        }
+                    } else {
+                        await sendMessage(chatId, '❌ رقم المشرف غير صحيح', adminsKeyboard());
+                    }
+                    return res.send('OK');
+                }
+
+                await sendMessage(chatId, '❌ أمر غير معروف!', mainKeyboard());
         }
 
-        else {
-            await sendMessage(chatId, '❌ أمر غير معروف', mainKeyboard());
-        }
-
+        res.send('OK');
     } catch (error) {
-        console.error('❌ خطأ:', error);
+        console.log('❌ خطأ في معالجة الطلب:', error);
+        res.send('OK');
     }
-    res.send('OK');
-});
-
-// 🔥 🔥 🔥 الـ API endpoints للواجهة 🔥 🔥 🔥
-
-// 1. جلب جميع المنتجات
-app.get('/api/products', (req, res) => {
-    res.json({
-        success: true,
-        products: products
-    });
-});
-
-// 2. التحقق من الاتصال
-app.get('/api/health', (req, res) => {
-    res.json({ 
-        success: true, 
-        message: 'البوت شغال!',
-        productsCount: products.length,
-        adminsCount: admins.length
-    });
-});
-
-// 3. الإحصائيات
-app.get('/api/stats', (req, res) => {
-    res.json({
-        success: true,
-        totalProducts: products.length,
-        totalAdmins: admins.length
-    });
-});
-
-// 4. الصفحة الرئيسية
-app.get('/', (req, res) => {
-    res.json({
-        success: true,
-        message: '🚀 سيرفر مكتبة الفرزدق شغال!',
-        endpoints: {
-            health: '/api/health',
-            products: '/api/products', 
-            stats: '/api/stats'
-        }
-    });
-});
-
-// معالجة الأخطاء
-app.use((err, req, res, next) => {
-    console.error('❌ خطأ في السيرفر:', err);
-    res.status(500).json({
-        success: false,
-        message: 'خطأ داخلي في السيرفر'
-    });
-});
-
-// 404 - صفحة غير موجودة
-app.use('*', (req, res) => {
-    res.status(404).json({
-        success: false,
-        message: 'الصفحة غير موجودة'
-    });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`✅ السيرفر شغال على البورت ${PORT}`);
-    console.log(`🌐 رابط الصحة: http://localhost:${PORT}/api/health`);
-    console.log(`🛍️ رابط المنتجات: http://localhost:${PORT}/api/products`);
-    console.log(`👥 عدد المشرفين: ${admins.length}`);
+    console.log(`🚀 البوت يعمل على المنفذ ${PORT}`);
 });
