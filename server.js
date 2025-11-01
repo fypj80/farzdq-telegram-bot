@@ -4,8 +4,21 @@ import axios from 'axios';
 const app = express();
 app.use(express.json());
 
-const TOKEN = process.env.TOKEN;
-const ADMIN_ID = process.env.ADMIN_ID;
+// 🔥 CORS يدوي بدون حاجة لتثبيت حزم إضافية
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    next();
+});
+
+// معالجة طلبات OPTIONS لـ CORS
+app.options('*', (req, res) => {
+    res.sendStatus(200);
+});
+
+const TOKEN = process.env.TOKEN || '8034752014:AAHvCAZ-_NKynT_NMtATy2XrKuZagpMKnv0';
+const ADMIN_ID = process.env.ADMIN_ID || '5044802006';
 
 let products = [];
 let admins = [ADMIN_ID];
@@ -54,8 +67,8 @@ function productsKeyboard() {
 function adminsKeyboard() {
     return {
         keyboard: [
-            [{ text: '➕ إضافة مشرف' }, { text: '👥 عرض المشرفين' }],
-            [{ text: '🏠 الرئيسية' }]
+            [{ text: '➕ إضافة مشرف' }, { text: '🗑️ حذف مشرف' }],
+            [{ text: '👥 عرض المشرفين' }, { text: '🏠 الرئيسية' }]
         ],
         resize_keyboard: true
     };
@@ -134,7 +147,8 @@ app.post('/webhook', async (req, res) => {
                 '• 📊 الإحصائيات\n\n' +
                 '👥 <b>إدارة المشرفين:</b>\n' +
                 '• 👥 عرض المشرفين\n' +
-                '• ➕ إضافة مشرف',
+                '• ➕ إضافة مشرف\n' +
+                '• 🗑️ حذف مشرف',
                 mainKeyboard()
             );
         }
@@ -176,20 +190,23 @@ app.post('/webhook', async (req, res) => {
                     return res.send('OK');
                 }
 
-                products.push({
+                const newProduct = {
                     id: Date.now(),
                     name,
-                    price,
+                    price: parseInt(price),
                     category,
                     description,
-                    image: image || ''
-                });
+                    image: image || 'https://via.placeholder.com/300x200/3498db/ffffff?text=منتج+جديد'
+                };
+
+                products.push(newProduct);
 
                 await sendMessage(chatId, 
                     `✅ <b>تم إضافة المنتج:</b>\n\n` +
                     `📦 ${name}\n` +
                     `💰 ${price} دينار\n` +
-                    `📁 ${category}`,
+                    `📁 ${category}\n` +
+                    `📝 ${description}`,
                     productsKeyboard()
                 );
             }
@@ -235,6 +252,70 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
+        // 🗑️ حذف مشرف - 🔥 الجديدة
+        else if (text === '🗑️ حذف مشرف' || text.startsWith('/removeadmin')) {
+            if (text === '🗑️ حذف مشرف') {
+                if (admins.length <= 1) {
+                    await sendMessage(chatId, '❌ لا يمكن حذف جميع المشرفين', adminsKeyboard());
+                    return res.send('OK');
+                }
+                
+                let message = '🗑️ <b>اختر مشرف للحذف:</b>\n\n';
+                admins.forEach((adminId, index) => {
+                    if (adminId !== userId) { // لا يمكن حذف نفسه
+                        message += `${index + 1}. <code>/removeadmin ${adminId}</code>\n`;
+                    }
+                });
+                
+                await sendMessage(chatId, message, adminsKeyboard());
+            } else {
+                const adminIdToRemove = text.replace('/removeadmin', '').trim();
+                
+                if (!adminIdToRemove) {
+                    await sendMessage(chatId, 
+                        '⚠️ استخدم: <code>/removeadmin رقم_المشرف</code>',
+                        adminsKeyboard()
+                    );
+                    return res.send('OK');
+                }
+
+                // منع حذف نفسه
+                if (adminIdToRemove === userId) {
+                    await sendMessage(chatId, 
+                        '❌ لا يمكنك حذف نفسك',
+                        adminsKeyboard()
+                    );
+                    return res.send('OK');
+                }
+
+                // منع حذف آخر مشرف
+                if (admins.length <= 1) {
+                    await sendMessage(chatId, 
+                        '❌ لا يمكن حذف آخر مشرف في النظام',
+                        adminsKeyboard()
+                    );
+                    return res.send('OK');
+                }
+
+                const index = admins.indexOf(adminIdToRemove);
+                if (index === -1) {
+                    await sendMessage(chatId, 
+                        `❌ المشرف ${adminIdToRemove} غير موجود`,
+                        adminsKeyboard()
+                    );
+                    return res.send('OK');
+                }
+
+                admins.splice(index, 1);
+                await sendMessage(chatId, 
+                    `✅ <b>تم حذف المشرف:</b>\n\n` +
+                    `👤 الرقم: ${adminIdToRemove}\n` +
+                    `📊 عدد المشرفين المتبقين: ${admins.length}`,
+                    adminsKeyboard()
+                );
+            }
+        }
+
         // 🗑️ حذف منتج
         else if (text === '🗑️ حذف منتج' || text.startsWith('/deleteproduct')) {
             if (text === '🗑️ حذف منتج') {
@@ -269,10 +350,11 @@ app.post('/webhook', async (req, res) => {
                     return res.send('OK');
                 }
 
-                products.splice(index, 1);
+                const deletedProduct = products.splice(index, 1)[0];
                 await sendMessage(chatId, 
                     `✅ <b>تم حذف المنتج:</b>\n\n` +
-                    `📦 ${productName}`,
+                    `📦 ${productName}\n` +
+                    `💰 ${deletedProduct.price} دينار`,
                     productsKeyboard()
                 );
             }
@@ -288,11 +370,69 @@ app.post('/webhook', async (req, res) => {
     res.send('OK');
 });
 
+// 🔥 🔥 🔥 الـ API endpoints للواجهة 🔥 🔥 🔥
+
+// 1. جلب جميع المنتجات
+app.get('/api/products', (req, res) => {
+    res.json({
+        success: true,
+        products: products
+    });
+});
+
+// 2. التحقق من الاتصال
+app.get('/api/health', (req, res) => {
+    res.json({ 
+        success: true, 
+        message: 'البوت شغال!',
+        productsCount: products.length,
+        adminsCount: admins.length
+    });
+});
+
+// 3. الإحصائيات
+app.get('/api/stats', (req, res) => {
+    res.json({
+        success: true,
+        totalProducts: products.length,
+        totalAdmins: admins.length
+    });
+});
+
+// 4. الصفحة الرئيسية
 app.get('/', (req, res) => {
-    res.send('🚀 سيرفر مكتبة الفرزدق شغال!');
+    res.json({
+        success: true,
+        message: '🚀 سيرفر مكتبة الفرزدق شغال!',
+        endpoints: {
+            health: '/api/health',
+            products: '/api/products', 
+            stats: '/api/stats'
+        }
+    });
+});
+
+// معالجة الأخطاء
+app.use((err, req, res, next) => {
+    console.error('❌ خطأ في السيرفر:', err);
+    res.status(500).json({
+        success: false,
+        message: 'خطأ داخلي في السيرفر'
+    });
+});
+
+// 404 - صفحة غير موجودة
+app.use('*', (req, res) => {
+    res.status(404).json({
+        success: false,
+        message: 'الصفحة غير موجودة'
+    });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`✅ السيرفر شغال على البورت ${PORT}`);
+    console.log(`🌐 رابط الصحة: http://localhost:${PORT}/api/health`);
+    console.log(`🛍️ رابط المنتجات: http://localhost:${PORT}/api/products`);
+    console.log(`👥 عدد المشرفين: ${admins.length}`);
 });
