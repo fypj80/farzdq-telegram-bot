@@ -22,6 +22,7 @@ const ADMIN_ID = process.env.ADMIN_ID || '5044802006';
 
 let products = [];
 let admins = [ADMIN_ID];
+let userStates = {}; // لتتبع حالة المستخدم
 
 async function sendMessage(chatId, text, replyMarkup = null) {
     try {
@@ -74,6 +75,14 @@ function adminsKeyboard() {
     };
 }
 
+// لوحة الإلغاء
+function cancelKeyboard() {
+    return {
+        keyboard: [[{ text: '❌ إلغاء' }]],
+        resize_keyboard: true
+    };
+}
+
 app.post('/webhook', async (req, res) => {
     try {
         const { message } = req.body;
@@ -88,8 +97,96 @@ app.post('/webhook', async (req, res) => {
             return res.send('OK');
         }
 
+        // التعامل مع حالة الإلغاء
+        if (text === '❌ إلغاء') {
+            delete userStates[userId];
+            await sendMessage(chatId, '✅ تم الإلغاء', mainKeyboard());
+            return res.send('OK');
+        }
+
+        // التحقق من حالة المستخدم أولاً
+        if (userStates[userId]) {
+            const state = userStates[userId];
+            
+            if (state.step === 'awaiting_product_name') {
+                state.productData = { name: text };
+                state.step = 'awaiting_product_price';
+                await sendMessage(chatId, '💰 الرجاء إدخال سعر المنتج:', cancelKeyboard());
+                return res.send('OK');
+            }
+            
+            else if (state.step === 'awaiting_product_price') {
+                if (isNaN(text)) {
+                    await sendMessage(chatId, '❌ الرجاء إدخال سعر صحيح (أرقام فقط):', cancelKeyboard());
+                    return res.send('OK');
+                }
+                state.productData.price = parseInt(text);
+                state.step = 'awaiting_product_description';
+                await sendMessage(chatId, '📝 الرجاء إدخال وصف المنتج:', cancelKeyboard());
+                return res.send('OK');
+            }
+            
+            else if (state.step === 'awaiting_product_description') {
+                state.productData.description = text;
+                state.step = 'awaiting_product_image';
+                await sendMessage(chatId, 
+                    '🖼️ الرجاء إرسال صورة للمنتج (اختياري):\n\n' +
+                    'يمكنك:\n' +
+                    '• إرسال صورة مباشرة\n' +
+                    '• أو كتابة "تخطي" للمتابعة بدون صورة',
+                    cancelKeyboard()
+                );
+                return res.send('OK');
+            }
+            
+            else if (state.step === 'awaiting_product_image') {
+                // إذا كتب "تخطي" أو أي نص آخر
+                if (text.toLowerCase() === 'تخطي') {
+                    state.productData.image = 'https://via.placeholder.com/300x200/3498db/ffffff?text=لا+توجد+صورة';
+                    await completeProductAddition(chatId, userId, state.productData);
+                    delete userStates[userId];
+                }
+                return res.send('OK');
+            }
+            
+            else if (state.step === 'awaiting_delete_product_number') {
+                if (isNaN(text) || parseInt(text) < 1 || parseInt(text) > products.length) {
+                    await sendMessage(chatId, `❌ الرجاء إدخال رقم صحيح بين 1 و ${products.length}:`, cancelKeyboard());
+                    return res.send('OK');
+                }
+                
+                const productIndex = parseInt(text) - 1;
+                const deletedProduct = products.splice(productIndex, 1)[0];
+                
+                await sendMessage(chatId, 
+                    `✅ <b>تم حذف المنتج:</b>\n\n` +
+                    `📦 ${deletedProduct.name}\n` +
+                    `💰 ${deletedProduct.price} دينار\n` +
+                    `📝 ${deletedProduct.description}`,
+                    productsKeyboard()
+                );
+                
+                delete userStates[userId];
+                return res.send('OK');
+            }
+        }
+
+        // التعامل مع الصور المرسلة
+        if (message.photo && userStates[userId] && userStates[userId].step === 'awaiting_product_image') {
+            const state = userStates[userId];
+            const photo = message.photo[message.photo.length - 1];
+            const fileId = photo.file_id;
+            
+            // حفظ معرف الصورة فقط (في بيئة حقيقية تحتاج لتحميل الصورة)
+            state.productData.image = fileId;
+            await completeProductAddition(chatId, userId, state.productData);
+            delete userStates[userId];
+            return res.send('OK');
+        }
+
         // الأوامر النصية والأزرار
         if (text === '/start' || text === '🏠 الرئيسية') {
+            delete userStates[userId];
             await sendMessage(chatId, 
                 '🎯 <b>مرحباً في لوحة تحكم مكتبة الفرزدق</b>\n\n' +
                 'اختر من الأزرار أدناه:', 
@@ -98,6 +195,7 @@ app.post('/webhook', async (req, res) => {
         }
 
         else if (text === '🛍️ عرض المنتجات' || text === '/listproducts') {
+            delete userStates[userId];
             if (products.length === 0) {
                 await sendMessage(chatId, '📦 لا توجد منتجات', productsKeyboard());
             } else {
@@ -110,6 +208,7 @@ app.post('/webhook', async (req, res) => {
         }
 
         else if (text === '📊 الإحصائيات' || text === '/stats') {
+            delete userStates[userId];
             const totalProducts = products.length;
             const totalAdmins = admins.length;
             await sendMessage(chatId, 
@@ -121,10 +220,12 @@ app.post('/webhook', async (req, res) => {
         }
 
         else if (text === '👥 إدارة المشرفين') {
+            delete userStates[userId];
             await sendMessage(chatId, '👥 <b>إدارة المشرفين:</b>', adminsKeyboard());
         }
 
         else if (text === '👥 عرض المشرفين' || text === '/listadmins') {
+            delete userStates[userId];
             if (admins.length === 0) {
                 await sendMessage(chatId, '👥 لا يوجد مشرفين', adminsKeyboard());
             } else {
@@ -138,6 +239,7 @@ app.post('/webhook', async (req, res) => {
         }
 
         else if (text === '❓ المساعدة' || text === '/help') {
+            delete userStates[userId];
             await sendMessage(chatId, 
                 '🧾 <b>الأوامر المتاحة:</b>\n\n' +
                 '🛍️ <b>إدارة المنتجات:</b>\n' +
@@ -154,66 +256,42 @@ app.post('/webhook', async (req, res) => {
         }
 
         // ➕ إضافة منتج
-        else if (text === '➕ إضافة منتج' || text.startsWith('/addproduct')) {
-            if (text === '➕ إضافة منتج') {
-                await sendMessage(chatId, 
-                    '📝 <b>إضافة منتج جديد:</b>\n\n' +
-                    'استخدم الأمر:\n' +
-                    '<code>/addproduct اسم~سعر~تصنيف~وصف~[صورة]</code>\n\n' +
-                    'مثال:\n' +
-                    '<code>/addproduct دفتر~2500~stationery~دفتر ملاحظات~https://example.com/image.jpg</code>',
-                    productsKeyboard()
-                );
-            } else {
-                const data = text.replace('/addproduct', '').trim();
-                
-                if (!data.includes('~')) {
-                    await sendMessage(chatId, 
-                        '⚠️ استخدم التنسيق:\n<code>/addproduct اسم~سعر~تصنيف~وصف~[صورة]</code>',
-                        productsKeyboard()
-                    );
-                    return res.send('OK');
-                }
+        else if (text === '➕ إضافة منتج') {
+            userStates[userId] = {
+                step: 'awaiting_product_name',
+                productData: {}
+            };
+            await sendMessage(chatId, 
+                '📦 <b>إضافة منتج جديد</b>\n\n' +
+                'الرجاء إدخال اسم المنتج:',
+                cancelKeyboard()
+            );
+        }
 
-                const parts = data.split('~');
-                const name = parts[0];
-                const price = parts[1];
-                const category = parts[2];
-                const description = parts[3];
-                const image = parts[4];
-
-                if (!['stationery', 'pens', 'papers'].includes(category)) {
-                    await sendMessage(chatId, 
-                        '⚠️ التصنيف غير صالح. المسموح: stationery, pens, papers',
-                        productsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                const newProduct = {
-                    id: Date.now(),
-                    name,
-                    price: parseInt(price),
-                    category,
-                    description,
-                    image: image || 'https://via.placeholder.com/300x200/3498db/ffffff?text=منتج+جديد'
-                };
-
-                products.push(newProduct);
-
-                await sendMessage(chatId, 
-                    `✅ <b>تم إضافة المنتج:</b>\n\n` +
-                    `📦 ${name}\n` +
-                    `💰 ${price} دينار\n` +
-                    `📁 ${category}\n` +
-                    `📝 ${description}`,
-                    productsKeyboard()
-                );
+        // 🗑️ حذف منتج
+        else if (text === '🗑️ حذف منتج') {
+            if (products.length === 0) {
+                await sendMessage(chatId, '📦 لا توجد منتجات لحذفها', productsKeyboard());
+                return res.send('OK');
             }
+            
+            let message = '🗑️ <b>اختر رقم المنتج للحذف:</b>\n\n';
+            products.forEach((product, index) => {
+                message += `${index + 1}. ${product.name} - ${product.price} دينار\n`;
+            });
+            
+            message += `\n📝 <b>أرسل رقم المنتج الذي تريد حذفه (1-${products.length}):</b>`;
+            
+            userStates[userId] = {
+                step: 'awaiting_delete_product_number'
+            };
+            
+            await sendMessage(chatId, message, cancelKeyboard());
         }
 
         // ➕ إضافة مشرف
         else if (text === '➕ إضافة مشرف' || text.startsWith('/addadmin')) {
+            delete userStates[userId];
             if (text === '➕ إضافة مشرف') {
                 await sendMessage(chatId, 
                     '👤 <b>إضافة مشرف جديد:</b>\n\n' +
@@ -252,8 +330,9 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // 🗑️ حذف مشرف - 🔥 الجديدة
+        // 🗑️ حذف مشرف
         else if (text === '🗑️ حذف مشرف' || text.startsWith('/removeadmin')) {
+            delete userStates[userId];
             if (text === '🗑️ حذف مشرف') {
                 if (admins.length <= 1) {
                     await sendMessage(chatId, '❌ لا يمكن حذف جميع المشرفين', adminsKeyboard());
@@ -262,7 +341,7 @@ app.post('/webhook', async (req, res) => {
                 
                 let message = '🗑️ <b>اختر مشرف للحذف:</b>\n\n';
                 admins.forEach((adminId, index) => {
-                    if (adminId !== userId) { // لا يمكن حذف نفسه
+                    if (adminId !== userId) {
                         message += `${index + 1}. <code>/removeadmin ${adminId}</code>\n`;
                     }
                 });
@@ -279,7 +358,6 @@ app.post('/webhook', async (req, res) => {
                     return res.send('OK');
                 }
 
-                // منع حذف نفسه
                 if (adminIdToRemove === userId) {
                     await sendMessage(chatId, 
                         '❌ لا يمكنك حذف نفسك',
@@ -288,7 +366,6 @@ app.post('/webhook', async (req, res) => {
                     return res.send('OK');
                 }
 
-                // منع حذف آخر مشرف
                 if (admins.length <= 1) {
                     await sendMessage(chatId, 
                         '❌ لا يمكن حذف آخر مشرف في النظام',
@@ -316,51 +393,8 @@ app.post('/webhook', async (req, res) => {
             }
         }
 
-        // 🗑️ حذف منتج
-        else if (text === '🗑️ حذف منتج' || text.startsWith('/deleteproduct')) {
-            if (text === '🗑️ حذف منتج') {
-                if (products.length === 0) {
-                    await sendMessage(chatId, '📦 لا توجد منتجات لحذفها', productsKeyboard());
-                    return res.send('OK');
-                }
-                
-                let message = '🗑️ <b>اختر منتج للحذف:</b>\n\n';
-                products.forEach((product, index) => {
-                    message += `${index + 1}. <code>/deleteproduct ${product.name}</code>\n`;
-                });
-                
-                await sendMessage(chatId, message, productsKeyboard());
-            } else {
-                const productName = text.replace('/deleteproduct', '').trim();
-                
-                if (!productName) {
-                    await sendMessage(chatId, 
-                        '⚠️ استخدم: <code>/deleteproduct اسم_المنتج</code>',
-                        productsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                const index = products.findIndex(p => p.name === productName);
-                if (index === -1) {
-                    await sendMessage(chatId, 
-                        `❌ المنتج "${productName}" غير موجود`,
-                        productsKeyboard()
-                    );
-                    return res.send('OK');
-                }
-
-                const deletedProduct = products.splice(index, 1)[0];
-                await sendMessage(chatId, 
-                    `✅ <b>تم حذف المنتج:</b>\n\n` +
-                    `📦 ${productName}\n` +
-                    `💰 ${deletedProduct.price} دينار`,
-                    productsKeyboard()
-                );
-            }
-        }
-
         else {
+            delete userStates[userId];
             await sendMessage(chatId, '❌ أمر غير معروف', mainKeyboard());
         }
 
@@ -369,6 +403,29 @@ app.post('/webhook', async (req, res) => {
     }
     res.send('OK');
 });
+
+// دالة لإكمال إضافة المنتج
+async function completeProductAddition(chatId, userId, productData) {
+    const newProduct = {
+        id: Date.now(),
+        name: productData.name,
+        price: productData.price,
+        description: productData.description,
+        image: productData.image,
+        category: 'general'
+    };
+
+    products.push(newProduct);
+
+    await sendMessage(chatId, 
+        `✅ <b>تم إضافة المنتج بنجاح!</b>\n\n` +
+        `📦 <b>الاسم:</b> ${newProduct.name}\n` +
+        `💰 <b>السعر:</b> ${newProduct.price} دينار\n` +
+        `📝 <b>الوصف:</b> ${newProduct.description}\n` +
+        `🖼️ <b>الصورة:</b> ${newProduct.image.includes('http') ? 'مرفوعة' : 'مرسلة'}`,
+        productsKeyboard()
+    );
+}
 
 // 🔥 🔥 🔥 الـ API endpoints للواجهة 🔥 🔥 🔥
 
