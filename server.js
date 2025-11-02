@@ -83,24 +83,65 @@ function cancelKeyboard() {
     };
 }
 
+// لوحة التخطي
+function skipKeyboard() {
+    return {
+        keyboard: [[{ text: '⏭️ تخطي' }, { text: '❌ إلغاء' }]],
+        resize_keyboard: true
+    };
+}
+
 app.post('/webhook', async (req, res) => {
     try {
         const { message } = req.body;
-        if (!message || !message.text) return res.send('OK');
+        if (!message) return res.send('OK');
         
         const chatId = message.chat.id;
-        const text = message.text;
         const userId = message.from.id.toString();
+        const text = message.text || '';
 
         if (!isAdmin(userId)) {
             await sendMessage(chatId, '❌ ليس لديك صلاحية للتحكم');
             return res.send('OK');
         }
 
+        // 🔥 🔥 🔥 معالجة الصور المرسلة أولاً 🔥 🔥 🔥
+        if (message.photo) {
+            console.log('📸 تم استقبال صورة من المستخدم:', userId);
+            
+            if (userStates[userId] && userStates[userId].step === 'awaiting_product_image') {
+                const photo = message.photo[message.photo.length - 1];
+                const fileId = photo.file_id;
+                
+                console.log('🖼️ معرف الصورة:', fileId);
+                
+                // حفظ معرف الصورة
+                userStates[userId].productData.image = fileId;
+                
+                // إكمال إضافة المنتج
+                await completeProductAddition(chatId, userId, userStates[userId].productData);
+                delete userStates[userId];
+                return res.send('OK');
+            } else {
+                await sendMessage(chatId, '❌ لا يمكن استقبال الصورة الآن. الرجاء البدء بإضافة منتج جديد.', mainKeyboard());
+                return res.send('OK');
+            }
+        }
+
         // التعامل مع حالة الإلغاء
         if (text === '❌ إلغاء') {
             delete userStates[userId];
             await sendMessage(chatId, '✅ تم الإلغاء', mainKeyboard());
+            return res.send('OK');
+        }
+
+        // التعامل مع التخطي
+        if (text === '⏭️ تخطي') {
+            if (userStates[userId] && userStates[userId].step === 'awaiting_product_image') {
+                userStates[userId].productData.image = 'https://via.placeholder.com/300x200/3498db/ffffff?text=لا+توجد+صورة';
+                await completeProductAddition(chatId, userId, userStates[userId].productData);
+                delete userStates[userId];
+            }
             return res.send('OK');
         }
 
@@ -111,12 +152,12 @@ app.post('/webhook', async (req, res) => {
             if (state.step === 'awaiting_product_name') {
                 state.productData = { name: text };
                 state.step = 'awaiting_product_price';
-                await sendMessage(chatId, '💰 الرجاء إدخال سعر المنتج:', cancelKeyboard());
+                await sendMessage(chatId, '💰 الرجاء إدخال سعر المنتج (أرقام فقط):', cancelKeyboard());
                 return res.send('OK');
             }
             
             else if (state.step === 'awaiting_product_price') {
-                if (isNaN(text)) {
+                if (isNaN(text) || parseInt(text) <= 0) {
                     await sendMessage(chatId, '❌ الرجاء إدخال سعر صحيح (أرقام فقط):', cancelKeyboard());
                     return res.send('OK');
                 }
@@ -130,22 +171,13 @@ app.post('/webhook', async (req, res) => {
                 state.productData.description = text;
                 state.step = 'awaiting_product_image';
                 await sendMessage(chatId, 
-                    '🖼️ الرجاء إرسال صورة للمنتج (اختياري):\n\n' +
-                    'يمكنك:\n' +
-                    '• إرسال صورة مباشرة\n' +
-                    '• أو كتابة "تخطي" للمتابعة بدون صورة',
-                    cancelKeyboard()
+                    '🖼️ <b>المرحلة الأخيرة:</b>\n\n' +
+                    'الآن يمكنك:\n' +
+                    '• إرسال صورة للمنتج مباشرة 📸\n' +
+                    '• أو الضغط على "⏭️ تخطي" للمتابعة بدون صورة\n\n' +
+                    'لإرسال صورة: اضغط على زر 📎 في التليجرام واختر صورة',
+                    skipKeyboard()
                 );
-                return res.send('OK');
-            }
-            
-            else if (state.step === 'awaiting_product_image') {
-                // إذا كتب "تخطي" أو أي نص آخر
-                if (text.toLowerCase() === 'تخطي') {
-                    state.productData.image = 'https://via.placeholder.com/300x200/3498db/ffffff?text=لا+توجد+صورة';
-                    await completeProductAddition(chatId, userId, state.productData);
-                    delete userStates[userId];
-                }
                 return res.send('OK');
             }
             
@@ -169,19 +201,6 @@ app.post('/webhook', async (req, res) => {
                 delete userStates[userId];
                 return res.send('OK');
             }
-        }
-
-        // التعامل مع الصور المرسلة
-        if (message.photo && userStates[userId] && userStates[userId].step === 'awaiting_product_image') {
-            const state = userStates[userId];
-            const photo = message.photo[message.photo.length - 1];
-            const fileId = photo.file_id;
-            
-            // حفظ معرف الصورة فقط (في بيئة حقيقية تحتاج لتحميل الصورة)
-            state.productData.image = fileId;
-            await completeProductAddition(chatId, userId, state.productData);
-            delete userStates[userId];
-            return res.send('OK');
         }
 
         // الأوامر النصية والأزرار
@@ -262,7 +281,7 @@ app.post('/webhook', async (req, res) => {
                 productData: {}
             };
             await sendMessage(chatId, 
-                '📦 <b>إضافة منتج جديد</b>\n\n' +
+                '📦 <b>بدء إضافة منتج جديد</b>\n\n' +
                 'الرجاء إدخال اسم المنتج:',
                 cancelKeyboard()
             );
@@ -422,7 +441,7 @@ async function completeProductAddition(chatId, userId, productData) {
         `📦 <b>الاسم:</b> ${newProduct.name}\n` +
         `💰 <b>السعر:</b> ${newProduct.price} دينار\n` +
         `📝 <b>الوصف:</b> ${newProduct.description}\n` +
-        `🖼️ <b>الصورة:</b> ${newProduct.image.includes('http') ? 'مرفوعة' : 'مرسلة'}`,
+        `🖼️ <b>الصورة:</b> ${newProduct.image.includes('http') ? 'بدون صورة' : 'مرفوعة'}`,
         productsKeyboard()
     );
 }
